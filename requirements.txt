@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+torch
+numpy<2
+ipywidgets
+pyyaml
+trimesh
+shap-e

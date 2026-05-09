@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Text to 3D</title>
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.150.0/build/three.module.js",
+      "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.150.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <style>
+
+    *{
+      margin:0;
+      padding:0;
+      box-sizing:border-box;
+      font-family:Arial;
+    }
+
+    body{
+      display:flex;
+      height:100vh;
+      overflow:hidden;
+      background:#020617;
+      color:white;
+    }
+
+    #sidebar{
+      width:260px;
+      background:#030712;
+      border-right:1px solid rgba(255,255,255,0.08);
+      padding:20px;
+      display:flex;
+      flex-direction:column;
+      gap:14px;
+      z-index:10;
+    }
+
+    h2{
+      font-size:22px;
+      font-weight:bold;
+    }
+
+    input{
+      padding:12px;
+      border:none;
+      border-radius:8px;
+      background:#111827;
+      color:white;
+      outline:none;
+      font-size:14px;
+    }
+
+    button{
+      padding:12px;
+      border:none;
+      border-radius:8px;
+      cursor:pointer;
+      font-weight:bold;
+      transition:0.2s;
+      font-size:14px;
+    }
+
+    #btn{
+      background:#2563eb;
+      color:white;
+    }
+
+    #btn:hover{
+      background:#1d4ed8;
+    }
+
+    #downloadBtn{
+      background:#1f2937;
+      color:#9ca3af;
+    }
+
+    #downloadBtn:disabled{
+      opacity:0.5;
+      cursor:not-allowed;
+    }
+
+    #status{
+      font-size:14px;
+      opacity:0.8;
+    }
+
+    #viewer{
+      flex:1;
+      position:relative;
+    }
+
+    canvas{
+      display:block;
+    }
+
+    #loader{
+      position:absolute;
+      inset:0;
+      display:none;
+      justify-content:center;
+      align-items:center;
+      flex-direction:column;
+      background:rgba(0,0,0,0.6);
+      backdrop-filter:blur(4px);
+      z-index:100;
+    }
+
+    .spinner{
+      width:70px;
+      height:70px;
+      border-radius:50%;
+      border:6px solid #1e293b;
+      border-top:6px solid #3b82f6;
+      animation:spin 1s linear infinite;
+    }
+
+    @keyframes spin{
+      to{
+        transform:rotate(360deg);
+      }
+    }
+
+    #progressBar{
+      width:200px;
+      height:6px;
+      background:#1e293b;
+      border-radius:999px;
+      margin-top:20px;
+      overflow:hidden;
+    }
+
+    #progressFill{
+      width:0%;
+      height:100%;
+      background:#3b82f6;
+      transition:width 0.3s;
+    }
+
+    #loaderText{
+      margin-top:12px;
+      font-size:15px;
+    }
+
+  </style>
+</head>
+
+<body>
+
+<div id="sidebar">
+
+  <h2>Text to 3D</h2>
+
+  <input
+    id="prompt"
+    placeholder="toy robot, voxel style"
+  />
+
+  <button id="btn">
+    Generate
+  </button>
+
+  <button id="downloadBtn" disabled>
+    Download Model
+  </button>
+
+  <p id="status">
+    Ready
+  </p>
+
+</div>
+
+<div id="viewer">
+
+  <div id="loader">
+
+    <div class="spinner"></div>
+
+    <div id="progressBar">
+      <div id="progressFill"></div>
+    </div>
+
+    <p id="loaderText">
+      Starting...
+    </p>
+
+  </div>
+
+</div>
+
+<script type="module">
+
+import * as THREE from "three";
+
+import { GLTFLoader }
+from "three/examples/jsm/loaders/GLTFLoader.js";
+
+import { OrbitControls }
+from "three/examples/jsm/controls/OrbitControls.js";
+
+import { RGBELoader }
+from "three/examples/jsm/loaders/RGBELoader.js";
+
+
+// ---------------- UI ----------------
+
+const viewer =
+  document.getElementById("viewer");
+
+const generateBtn =
+  document.getElementById("btn");
+
+const downloadBtn =
+  document.getElementById("downloadBtn");
+
+const status =
+  document.getElementById("status");
+
+const loaderUI =
+  document.getElementById("loader");
+
+const loaderText =
+  document.getElementById("loaderText");
+
+const progressFill =
+  document.getElementById("progressFill");
+
+
+// ---------------- SCENE ----------------
+
+const scene = new THREE.Scene();
+
+scene.background =
+  new THREE.Color(0x020617);
+
+
+// ---------------- CAMERA ----------------
+
+const camera =
+  new THREE.PerspectiveCamera(
+    75,
+    viewer.clientWidth / viewer.clientHeight,
+    0.1,
+    1000
+  );
+
+camera.position.set(0, 1.5, 4);
+
+
+// ---------------- RENDERER ----------------
+
+const renderer =
+  new THREE.WebGLRenderer({
+    antialias:true
+  });
+
+renderer.setPixelRatio(
+  window.devicePixelRatio
+);
+
+renderer.setSize(
+  viewer.clientWidth,
+  viewer.clientHeight
+);
+
+renderer.outputEncoding =
+  THREE.sRGBEncoding;
+
+renderer.toneMapping =
+  THREE.ACESFilmicToneMapping;
+
+renderer.toneMappingExposure = 1.2;
+
+viewer.appendChild(renderer.domElement);
+
+
+// ---------------- RESIZE ----------------
+
+window.addEventListener("resize", ()=>{
+
+  const width = viewer.clientWidth;
+  const height = viewer.clientHeight;
+
+  renderer.setSize(width, height);
+
+  camera.aspect = width / height;
+
+  camera.updateProjectionMatrix();
+});
+
+
+// ---------------- CONTROLS ----------------
+
+const controls =
+  new OrbitControls(
+    camera,
+    renderer.domElement
+  );
+
+controls.enableDamping = true;
+
+
+// ---------------- HDRI ----------------
+
+new RGBELoader().load(
+
+  "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/studio_small_09_1k.hdr",
+
+  (texture)=>{
+
+    texture.mapping =
+      THREE.EquirectangularReflectionMapping;
+
+    scene.environment = texture;
+  }
+);
+
+
+// ---------------- LIGHTS ----------------
+
+const ambient =
+  new THREE.AmbientLight(
+    0xffffff,
+    1.5
+  );
+
+scene.add(ambient);
+
+
+const dirLight =
+  new THREE.DirectionalLight(
+    0xffffff,
+    2
+  );
+
+dirLight.position.set(5,5,5);
+
+scene.add(dirLight);
+
+
+// ---------------- MODEL ----------------
+
+let currentModel = null;
+
+
+// ---------------- GENERATE ----------------
+
+generateBtn.onclick = generate;
+
+
+async function generate(){
+
+  const prompt =
+    document.getElementById("prompt")
+    .value
+    .trim();
+
+  if(!prompt){
+
+    alert("Enter a prompt");
+
+    return;
+  }
+
+  loaderUI.style.display = "flex";
+
+  loaderText.innerText =
+    "Generating 3D model...";
+
+  progressFill.style.width = "5%";
+
+  status.innerText = "Generating...";
+
+  generateBtn.disabled = true;
+
+  downloadBtn.disabled = true;
+
+
+  // -------- PROGRESS --------
+
+  const interval = setInterval(async ()=>{
+
+    try{
+
+      const res =
+        await fetch(
+          "http://127.0.0.1:8000/progress"
+        );
+
+      const data =
+        await res.json();
+
+      loaderText.innerText =
+        data.status || "Generating...";
+
+      progressFill.style.width =
+        `${data.progress || 0}%`;
+
+    }
+    catch(err){
+
+      console.log(err);
+    }
+
+  }, 1000);
+
+
+  try{
+
+    const response = await fetch(
+
+      `http://127.0.0.1:8000/generate3d?prompt=${encodeURIComponent(prompt)}`
+
+    );
+
+    const data =
+      await response.json();
+
+    clearInterval(interval);
+
+
+    // -------- ERROR --------
+
+    if(data.error){
+
+      console.error(data.error);
+
+      loaderUI.style.display = "none";
+
+      status.innerText = "Backend error";
+
+      generateBtn.disabled = false;
+
+      return;
+    }
+
+
+    // -------- MODEL URL --------
+
+    const modelURL =
+      `http://127.0.0.1:8000${data.model_url}?t=${Date.now()}`;
+
+    console.log("MODEL URL:", modelURL);
+
+
+    // -------- LOAD MODEL --------
+
+    const gltfLoader =
+      new GLTFLoader();
+
+    gltfLoader.load(
+
+      modelURL,
+
+      (gltf)=>{
+
+        if(currentModel){
+
+          scene.remove(currentModel);
+        }
+
+        const model =
+          gltf.scene;
+
+        console.log("MODEL:", model);
+
+
+        // -------- CENTER MODEL --------
+
+        const box =
+          new THREE.Box3()
+          .setFromObject(model);
+
+        const center =
+          box.getCenter(
+            new THREE.Vector3()
+          );
+
+        const size =
+          box.getSize(
+            new THREE.Vector3()
+          );
+
+        const maxDim =
+          Math.max(
+            size.x,
+            size.y,
+            size.z
+          );
+
+        model.position.x -= center.x;
+        model.position.y -= center.y;
+        model.position.z -= center.z;
+
+        const scale =
+          2 / maxDim;
+
+        model.scale.setScalar(scale);
+
+
+        // -------- MATERIALS --------
+
+        model.traverse((child)=>{
+
+          if(child.isMesh){
+
+            console.log("Mesh found");
+
+            if(child.material){
+
+              child.material.envMapIntensity = 2;
+
+              child.material.needsUpdate = true;
+            }
+          }
+        });
+
+
+        scene.add(model);
+
+        currentModel = model;
+
+
+        // -------- CAMERA --------
+
+        camera.position.set(0, 1.5, 4);
+
+        controls.target.set(0,0,0);
+
+        controls.update();
+
+
+        // -------- UI --------
+
+        loaderUI.style.display = "none";
+
+        status.innerText = "Done";
+
+        generateBtn.disabled = false;
+
+        downloadBtn.disabled = false;
+
+        downloadBtn.onclick = ()=>{
+
+          window.open(modelURL);
+        };
+      },
+
+
+      // progress
+      undefined,
+
+
+      // error
+      (err)=>{
+
+        console.error(err);
+
+        loaderUI.style.display = "none";
+
+        status.innerText =
+          "Model failed to load";
+
+        generateBtn.disabled = false;
+      }
+    );
+
+  }
+  catch(err){
+
+    clearInterval(interval);
+
+    console.error(err);
+
+    loaderUI.style.display = "none";
+
+    status.innerText = "Backend error";
+
+    generateBtn.disabled = false;
+  }
+}
+
+
+// ---------------- ANIMATE ----------------
+
+function animate(){
+
+  requestAnimationFrame(animate);
+
+  controls.update();
+
+  renderer.render(scene, camera);
+}
+
+animate();
+
+</script>
+
+</body>
+</html>
