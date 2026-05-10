@@ -251,6 +251,24 @@ function apiUrl(path){
   return `${API_BASE}${path}`;
 }
 
+const NGROK_HEADERS = {
+  "ngrok-skip-browser-warning": "true"
+};
+
+function apiFetch(path, options = {}){
+
+  return fetch(
+    apiUrl(path),
+    {
+      ...options,
+      headers: {
+        ...NGROK_HEADERS,
+        ...(options.headers || {})
+      }
+    }
+  );
+}
+
 
 // ======================================================
 // SCENE
@@ -392,8 +410,8 @@ async function clearOutputs(){
 
   try{
 
-    await fetch(
-      apiUrl("/clear_outputs"),
+    await apiFetch(
+      "/clear_outputs",
       {
         method: "POST"
       }
@@ -474,8 +492,8 @@ async function generate(){
     try{
 
       const res =
-        await fetch(
-          apiUrl("/progress")
+        await apiFetch(
+          "/progress"
         );
 
       const data =
@@ -508,9 +526,9 @@ async function generate(){
         quality: qualitySelect.value
       });
 
-    const response = await fetch(
+    const response = await apiFetch(
 
-      apiUrl(`/generate3d?${params.toString()}`)
+      `/generate3d?${params.toString()}`
 
     );
 
@@ -558,6 +576,10 @@ async function generate(){
 
     const gltfLoader =
       new GLTFLoader();
+
+    gltfLoader.setRequestHeader(
+      NGROK_HEADERS
+    );
 
     gltfLoader.load(
 
@@ -672,7 +694,12 @@ async function generate(){
           try{
 
             const fileResponse =
-              await fetch(downloadURL);
+              await fetch(
+                downloadURL,
+                {
+                  headers: NGROK_HEADERS
+                }
+              );
 
             if(!fileResponse.ok){
 

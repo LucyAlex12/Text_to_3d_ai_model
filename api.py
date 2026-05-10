@@ -937,6 +937,14 @@ def home():
 
     return FileResponse("index.html")
 
+
+@app.get("/health")
+def health():
+
+    return {
+        "ok": True
+    }
+
 # =====================================================
 # PROGRESS
 # =====================================================

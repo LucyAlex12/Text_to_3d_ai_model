@@ -43,13 +43,15 @@ https://github.com/LucyAlex12/Text_to_3d_ai_model.git
 1. Open `Text_to_3D_Colab.ipynb` in Google Colab.
 2. In Colab, use `Runtime > Change runtime type > T4 GPU`.
 3. Add your ngrok authtoken in Colab secrets as `NGROK_AUTH_TOKEN`, or paste it when the notebook asks.
-4. Run the notebook cells from top to bottom.
-5. Open the printed ngrok URL.
+4. Optional: reserve a static domain in ngrok and add it to Colab secrets as `NGROK_STATIC_DOMAIN`, for example `your-name.ngrok-free.app`.
+5. Run the notebook cells from top to bottom.
+6. Open the printed ngrok URL in a normal browser tab, not Colab's iframe preview.
 
-The ngrok URL is temporary on the free plan and changes each time the notebook restarts.
+If you do not set `NGROK_STATIC_DOMAIN`, ngrok gives a temporary URL that changes each time the notebook restarts. If you do set a static domain, the URL can stay the same, but the app still only works while the Colab runtime is running.
 
 ## Notes
 
 - `TripoSR/model.ckpt` is large and should not be committed to Git. The Colab notebook downloads it from Hugging Face.
 - The frontend uses same-origin API paths, so it works locally and through ngrok.
+- The frontend sends the `ngrok-skip-browser-warning` header for API, model-preview, and download requests.
 - The download button fetches the generated `.glb` file and saves it as `text-to-3d-model.glb`.
