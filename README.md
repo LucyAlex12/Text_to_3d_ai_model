@@ -54,6 +54,7 @@ If you do not set `NGROK_STATIC_DOMAIN`, ngrok gives a temporary URL that change
 - `TripoSR/model.ckpt` is large and should not be committed to Git. The Colab notebook downloads it from Hugging Face.
 - Hugging Face may show an unauthenticated-download warning in Colab. It is safe to ignore for the public TripoSR files unless rate limits interrupt the download.
 - `shap-e` is not required by this app and is intentionally not installed because it does not support Colab's current Python 3.12 runtime.
+- The notebook pins `numpy==1.26.4`, `llvmlite==0.43.0`, and `numba==0.60.0` so `rembg` imports without Colab's preinstalled NumPy ABI mismatch.
 - The frontend uses same-origin API paths, so it works locally and through ngrok.
 - The frontend sends the `ngrok-skip-browser-warning` header for API, model-preview, and download requests.
 - The download button fetches the generated `.glb` file and saves it as `text-to-3d-model.glb`.

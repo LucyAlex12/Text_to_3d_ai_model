@@ -1,7 +1,9 @@
 fastapi
 uvicorn
 torch
-numpy<2
+numpy==1.26.4
+llvmlite==0.43.0
+numba==0.60.0
 Pillow
 diffusers
 transformers
