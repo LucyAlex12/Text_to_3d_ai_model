@@ -47,7 +47,8 @@
       font-weight:bold;
     }
 
-    input{
+    input,
+    select{
       padding:12px;
       border:none;
       border-radius:8px;
@@ -159,8 +160,14 @@
 
   <input
     id="prompt"
-    placeholder="toy robot, voxel style"
+    placeholder="toy robot, smooth plastic"
   />
+
+  <select id="quality">
+    <option value="balanced" selected>Balanced Quality</option>
+    <option value="fast">Fast Preview</option>
+    <option value="high">High Detail</option>
+  </select>
 
   <button id="btn">
     Generate
@@ -208,7 +215,9 @@ import { RGBELoader }
 from "three/examples/jsm/loaders/RGBELoader.js";
 
 
-// ---------------- UI ----------------
+// ======================================================
+// UI
+// ======================================================
 
 const viewer =
   document.getElementById("viewer");
@@ -231,8 +240,21 @@ const loaderText =
 const progressFill =
   document.getElementById("progressFill");
 
+const qualitySelect =
+  document.getElementById("quality");
 
-// ---------------- SCENE ----------------
+const API_BASE =
+  window.location.origin;
+
+function apiUrl(path){
+
+  return `${API_BASE}${path}`;
+}
+
+
+// ======================================================
+// SCENE
+// ======================================================
 
 const scene = new THREE.Scene();
 
@@ -240,7 +262,9 @@ scene.background =
   new THREE.Color(0x020617);
 
 
-// ---------------- CAMERA ----------------
+// ======================================================
+// CAMERA
+// ======================================================
 
 const camera =
   new THREE.PerspectiveCamera(
@@ -253,11 +277,13 @@ const camera =
 camera.position.set(0, 1.5, 4);
 
 
-// ---------------- RENDERER ----------------
+// ======================================================
+// RENDERER
+// ======================================================
 
 const renderer =
   new THREE.WebGLRenderer({
-    antialias:true
+    antialias: true
   });
 
 renderer.setPixelRatio(
@@ -280,7 +306,9 @@ renderer.toneMappingExposure = 1.2;
 viewer.appendChild(renderer.domElement);
 
 
-// ---------------- RESIZE ----------------
+// ======================================================
+// RESIZE
+// ======================================================
 
 window.addEventListener("resize", ()=>{
 
@@ -295,7 +323,9 @@ window.addEventListener("resize", ()=>{
 });
 
 
-// ---------------- CONTROLS ----------------
+// ======================================================
+// CONTROLS
+// ======================================================
 
 const controls =
   new OrbitControls(
@@ -306,7 +336,9 @@ const controls =
 controls.enableDamping = true;
 
 
-// ---------------- HDRI ----------------
+// ======================================================
+// HDRI
+// ======================================================
 
 new RGBELoader().load(
 
@@ -322,7 +354,9 @@ new RGBELoader().load(
 );
 
 
-// ---------------- LIGHTS ----------------
+// ======================================================
+// LIGHTS
+// ======================================================
 
 const ambient =
   new THREE.AmbientLight(
@@ -331,7 +365,6 @@ const ambient =
   );
 
 scene.add(ambient);
-
 
 const dirLight =
   new THREE.DirectionalLight(
@@ -344,15 +377,42 @@ dirLight.position.set(5,5,5);
 scene.add(dirLight);
 
 
-// ---------------- MODEL ----------------
+// ======================================================
+// MODEL
+// ======================================================
 
 let currentModel = null;
 
 
-// ---------------- GENERATE ----------------
+// ======================================================
+// CLEAR OUTPUTS
+// ======================================================
+
+async function clearOutputs(){
+
+  try{
+
+    await fetch(
+      apiUrl("/clear_outputs"),
+      {
+        method: "POST"
+      }
+    );
+
+    console.log("Outputs cleared");
+
+  }catch(err){
+
+    console.log(err);
+  }
+}
+
+
+// ======================================================
+// GENERATE
+// ======================================================
 
 generateBtn.onclick = generate;
-
 
 async function generate(){
 
@@ -368,6 +428,16 @@ async function generate(){
     return;
   }
 
+  // ====================================================
+  // CLEAR OLD OUTPUTS
+  // ====================================================
+
+  await clearOutputs();
+
+  // ====================================================
+  // UI START
+  // ====================================================
+
   loaderUI.style.display = "flex";
 
   loaderText.innerText =
@@ -379,10 +449,25 @@ async function generate(){
 
   generateBtn.disabled = true;
 
+  qualitySelect.disabled = true;
+
   downloadBtn.disabled = true;
 
+  // ====================================================
+  // REMOVE OLD MODEL
+  // ====================================================
 
-  // -------- PROGRESS --------
+  if(currentModel){
+
+    scene.remove(currentModel);
+
+    currentModel = null;
+  }
+
+
+  // ====================================================
+  // PROGRESS LOOP
+  // ====================================================
 
   const interval = setInterval(async ()=>{
 
@@ -390,7 +475,7 @@ async function generate(){
 
       const res =
         await fetch(
-          "http://127.0.0.1:8000/progress"
+          apiUrl("/progress")
         );
 
       const data =
@@ -413,9 +498,19 @@ async function generate(){
 
   try{
 
+    // ==================================================
+    // GENERATE REQUEST
+    // ==================================================
+
+    const params =
+      new URLSearchParams({
+        prompt,
+        quality: qualitySelect.value
+      });
+
     const response = await fetch(
 
-      `http://127.0.0.1:8000/generate3d?prompt=${encodeURIComponent(prompt)}`
+      apiUrl(`/generate3d?${params.toString()}`)
 
     );
 
@@ -425,7 +520,9 @@ async function generate(){
     clearInterval(interval);
 
 
-    // -------- ERROR --------
+    // ==================================================
+    // ERROR
+    // ==================================================
 
     if(data.error){
 
@@ -437,19 +534,27 @@ async function generate(){
 
       generateBtn.disabled = false;
 
+      qualitySelect.disabled = false;
+
       return;
     }
 
 
-    // -------- MODEL URL --------
+    // ==================================================
+    // MODEL URL
+    // ==================================================
+
+    const downloadURL =
+      apiUrl(data.model_url);
 
     const modelURL =
-      `http://127.0.0.1:8000${data.model_url}?t=${Date.now()}`;
+      `${downloadURL}?t=${Date.now()}`;
 
     console.log("MODEL URL:", modelURL);
 
-
-    // -------- LOAD MODEL --------
+    // ==================================================
+    // LOAD MODEL
+    // ==================================================
 
     const gltfLoader =
       new GLTFLoader();
@@ -460,18 +565,14 @@ async function generate(){
 
       (gltf)=>{
 
-        if(currentModel){
-
-          scene.remove(currentModel);
-        }
+        console.log("GLTF loaded");
 
         const model =
           gltf.scene;
 
-        console.log("MODEL:", model);
-
-
-        // -------- CENTER MODEL --------
+        // ==============================================
+        // CENTER MODEL
+        // ==============================================
 
         const box =
           new THREE.Box3()
@@ -494,23 +595,33 @@ async function generate(){
             size.z
           );
 
-        model.position.x -= center.x;
-        model.position.y -= center.y;
-        model.position.z -= center.z;
+        model.position.sub(center);
 
-        const scale =
-          2 / maxDim;
+        if(maxDim > 0){
 
-        model.scale.setScalar(scale);
+          const scale =
+            2 / maxDim;
+
+          model.scale.setScalar(scale);
+        }
 
 
-        // -------- MATERIALS --------
+        // ==============================================
+        // MATERIALS
+        // ==============================================
 
         model.traverse((child)=>{
 
           if(child.isMesh){
 
-            console.log("Mesh found");
+            child.castShadow = true;
+
+            child.receiveShadow = true;
+
+            if(child.geometry){
+
+              child.geometry.computeVertexNormals();
+            }
 
             if(child.material){
 
@@ -522,12 +633,18 @@ async function generate(){
         });
 
 
+        // ==============================================
+        // ADD TO SCENE
+        // ==============================================
+
         scene.add(model);
 
         currentModel = model;
 
 
-        // -------- CAMERA --------
+        // ==============================================
+        // CAMERA
+        // ==============================================
 
         camera.position.set(0, 1.5, 4);
 
@@ -536,7 +653,9 @@ async function generate(){
         controls.update();
 
 
-        // -------- UI --------
+        // ==============================================
+        // UI
+        // ==============================================
 
         loaderUI.style.display = "none";
 
@@ -544,20 +663,73 @@ async function generate(){
 
         generateBtn.disabled = false;
 
+        qualitySelect.disabled = false;
+
         downloadBtn.disabled = false;
 
-        downloadBtn.onclick = ()=>{
+        downloadBtn.onclick = async ()=>{
 
-          window.open(modelURL);
+          try{
+
+            const fileResponse =
+              await fetch(downloadURL);
+
+            if(!fileResponse.ok){
+
+              throw new Error("Download failed");
+            }
+
+            const blob =
+              await fileResponse.blob();
+
+            const objectURL =
+              URL.createObjectURL(blob);
+
+            const link =
+              document.createElement("a");
+
+            link.href =
+              objectURL;
+
+            link.download =
+              "text-to-3d-model.glb";
+
+            document.body.appendChild(link);
+
+            link.click();
+
+            link.remove();
+
+            URL.revokeObjectURL(objectURL);
+          }
+          catch(err){
+
+            console.error(err);
+
+            window.open(downloadURL, "_blank");
+          }
         };
       },
 
 
-      // progress
-      undefined,
+      // ==============================================
+      // PROGRESS
+      // ==============================================
+
+      (xhr)=>{
+
+        console.log(
+          `Loading model: ${
+            (xhr.loaded / xhr.total) * 100
+          }%`
+        );
+      },
 
 
-      // error
+      // ==============================================
+      // ERROR
+      // ==============================================
+
       (err)=>{
 
         console.error(err);
@@ -568,6 +740,8 @@ async function generate(){
           "Model failed to load";
 
         generateBtn.disabled = false;
+
+        qualitySelect.disabled = false;
       }
     );
 
@@ -583,11 +757,15 @@ async function generate(){
     status.innerText = "Backend error";
 
     generateBtn.disabled = false;
+
+    qualitySelect.disabled = false;
   }
 }
 
 
-// ---------------- ANIMATE ----------------
+// ======================================================
+// ANIMATE
+// ======================================================
 
 function animate(){
 

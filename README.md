@@ -1,28 +1,55 @@
-# Point·E
+# Text to 3D AI Model
 
-![Animation of four 3D point clouds rotating](point_e/examples/paper_banner.gif)
+Simple FastAPI web app that generates a source image from a text prompt, converts it to a 3D mesh with TripoSR, previews the GLB in the browser, and lets the user download the model.
 
-This is the official code and model release for [Point-E: A System for Generating 3D Point Clouds from Complex Prompts](https://arxiv.org/abs/2212.08751).
+## Local Setup
 
-# Usage
+```powershell
+cd C:\Users\ISMS\Downloads\practice
+.\venv\Scripts\python.exe api.py
+```
 
-Install with `pip install -e .`.
+Then open:
 
-To get started with examples, see the following notebooks:
+```text
+http://127.0.0.1:8000
+```
 
- * [image2pointcloud.ipynb](point_e/examples/image2pointcloud.ipynb) - sample a point cloud, conditioned on some example synthetic view images.
- * [text2pointcloud.ipynb](point_e/examples/text2pointcloud.ipynb) - use our small, worse quality pure text-to-3D model to produce 3D point clouds directly from text descriptions. This model's capabilities are limited, but it does understand some simple categories and colors.
- * [pointcloud2mesh.ipynb](point_e/examples/pointcloud2mesh.ipynb) - try our SDF regression model for producing meshes from point clouds.
+## Git Commit And Push
 
-For our P-FID and P-IS evaluation scripts, see:
+Check what changed:
 
- * [evaluate_pfid.py](point_e/evals/scripts/evaluate_pfid.py)
- * [evaluate_pis.py](point_e/evals/scripts/evaluate_pis.py)
+```powershell
+git status
+git diff --stat
+```
 
-For our Blender rendering code, see [blender_script.py](point_e/evals/scripts/blender_script.py)
+Commit and push to the existing GitHub repository:
 
-# Samples
+```powershell
+git add api.py index.html pipeline.py requirements.txt TripoSR/requirements.txt README.md Text_to_3D_Colab.ipynb
+git commit -m "Improve text to 3D generation and Colab hosting"
+git push origin main
+```
 
-You can download the seed images and point clouds corresponding to the paper banner images [here](https://openaipublic.azureedge.net/main/point-e/banner_pcs.zip).
+The configured remote is:
 
-You can download the seed images used for COCO CLIP R-Precision evaluations [here](https://openaipublic.azureedge.net/main/point-e/coco_images.zip).
+```text
+https://github.com/LucyAlex12/Text_to_3d_ai_model.git
+```
+
+## Google Colab Public Hosting
+
+1. Open `Text_to_3D_Colab.ipynb` in Google Colab.
+2. In Colab, use `Runtime > Change runtime type > T4 GPU`.
+3. Add your ngrok authtoken in Colab secrets as `NGROK_AUTH_TOKEN`, or paste it when the notebook asks.
+4. Run the notebook cells from top to bottom.
+5. Open the printed ngrok URL.
+
+The ngrok URL is temporary on the free plan and changes each time the notebook restarts.
+
+## Notes
+
+- `TripoSR/model.ckpt` is large and should not be committed to Git. The Colab notebook downloads it from Hugging Face.
+- The frontend uses same-origin API paths, so it works locally and through ngrok.
+- The download button fetches the generated `.glb` file and saves it as `text-to-3d-model.glb`.
