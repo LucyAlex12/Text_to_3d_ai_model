@@ -16,4 +16,3 @@ omegaconf==2.3.0
 einops==0.7.0
 trimesh
 git+https://github.com/tatsy/torchmcubes.git
-shap-e
