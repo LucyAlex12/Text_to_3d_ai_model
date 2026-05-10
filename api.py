@@ -13,6 +13,9 @@ import uvicorn
 
 from PIL import Image
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TRIPOSR_DIR = os.path.join(BASE_DIR, "TripoSR")
+
 try:
     import cv2
 except ImportError:
@@ -36,7 +39,8 @@ except ImportError:
 # TRIPOSR
 # =====================================================
 
-sys.path.append("./TripoSR")
+if TRIPOSR_DIR not in sys.path:
+    sys.path.insert(0, TRIPOSR_DIR)
 
 from tsr.system import TSR
 from tsr.utils import remove_background, resize_foreground, to_gradio_3d_orientation
@@ -58,10 +62,6 @@ app.add_middleware(
 # =====================================================
 # SETTINGS
 # =====================================================
-
-BASE_DIR = os.path.dirname(
-    os.path.abspath(__file__)
-)
 
 OUTPUT_DIR = os.path.join(
     BASE_DIR,
