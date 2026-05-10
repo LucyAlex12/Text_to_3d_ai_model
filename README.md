@@ -42,8 +42,8 @@ https://github.com/LucyAlex12/Text_to_3d_ai_model.git
 
 1. Open `Text_to_3D_Colab.ipynb` in Google Colab.
 2. In Colab, use `Runtime > Change runtime type > T4 GPU`.
-3. Add your ngrok authtoken in Colab secrets as `NGROK_AUTH_TOKEN`, or paste it when the notebook asks.
-4. Optional: reserve a static domain in ngrok and add it to Colab secrets as `NGROK_STATIC_DOMAIN`, for example `your-name.ngrok-free.app`.
+3. Paste your ngrok authtoken when the notebook asks. The notebook intentionally avoids Colab Secrets because Colab's secret vault can throw `Failed to fetch` errors.
+4. Optional: reserve a static domain in ngrok and enter it when the notebook asks, for example `your-name.ngrok-free.app`.
 5. Run the notebook cells from top to bottom.
 6. Open the printed ngrok URL in a normal browser tab, not Colab's iframe preview.
 
