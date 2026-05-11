@@ -166,7 +166,7 @@
   <select id="quality">
     <option value="balanced" selected>Balanced Quality</option>
     <option value="fast">Fast Preview</option>
-    <option value="high">High Detail</option>
+    <option value="high">High Detail + Cleanup</option>
   </select>
 
   <button id="btn">
@@ -681,7 +681,20 @@ async function generate(){
 
         loaderUI.style.display = "none";
 
-        status.innerText = "Done";
+        const details = [];
+
+        if(data.candidate_views > 1){
+
+          details.push(`${data.candidate_views} views`);
+        }
+
+        if(data.texture_baked){
+
+          details.push("texture baked");
+        }
+
+        status.innerText =
+          details.length ? `Done (${details.join(", ")})` : "Done";
 
         generateBtn.disabled = false;
 

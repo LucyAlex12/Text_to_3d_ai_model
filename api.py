@@ -3,6 +3,7 @@ import re
 import shutil
 import sys
 import uuid
+import math
 from typing import Optional
 
 import numpy as np
@@ -44,6 +45,11 @@ if TRIPOSR_DIR not in sys.path:
 
 from tsr.system import TSR
 from tsr.utils import remove_background, resize_foreground, to_gradio_3d_orientation
+
+try:
+    from tsr.bake_texture import bake_texture
+except Exception:
+    bake_texture = None
 
 # =====================================================
 # APP
@@ -109,16 +115,28 @@ MESH_QUALITY_PRESETS = {
         "resolution": 192,
         "smooth_iterations": 4,
         "threshold": DEFAULT_MESH_THRESHOLD,
+        "candidate_views": 1,
+        "texture_resolution": 0,
+        "target_faces": 45000,
+        "advanced_cleanup": False,
     },
     "balanced": {
         "resolution": DEFAULT_MC_RESOLUTION,
         "smooth_iterations": 8,
         "threshold": DEFAULT_MESH_THRESHOLD,
+        "candidate_views": 1,
+        "texture_resolution": 0,
+        "target_faces": 65000,
+        "advanced_cleanup": True,
     },
     "high": {
         "resolution": 320,
-        "smooth_iterations": 10,
+        "smooth_iterations": 6,
         "threshold": DEFAULT_MESH_THRESHOLD,
+        "candidate_views": 4,
+        "texture_resolution": 1024,
+        "target_faces": 90000,
+        "advanced_cleanup": True,
     },
 }
 
@@ -151,6 +169,13 @@ KEEP_MAIN_FOREGROUND = os.getenv(
     "TRIPOSR_KEEP_MAIN_FOREGROUND",
     "1"
 ) != "0"
+
+HIGH_DETAIL_CANDIDATE_VIEWS = [
+    "front three-quarter orthographic product view, all parts visible",
+    "front orthographic product view, symmetrical full object",
+    "left side orthographic product view, full object silhouette",
+    "rear three-quarter orthographic product view, full object visible",
+]
 
 os.makedirs(
     OUTPUT_DIR,
@@ -249,7 +274,19 @@ IDENTITY_PROMPT_RULES = [
     ),
     (
         ["table", "desk"],
-        "recognizable table structure, clear tabletop, clear supporting legs, no extra duplicate table",
+        "recognizable table structure, flat rectangular tabletop, straight supporting legs, hard clean edges, visible underside supports, no extra duplicate table",
+    ),
+    (
+        ["fan"],
+        "recognizable fan structure, circular guard, central motor hub, visible blades, straight pole, stable base, symmetrical round parts",
+    ),
+    (
+        ["car", "vehicle", "truck", "bus"],
+        "recognizable vehicle structure, four wheels, clean body panels, hard surface edges, symmetrical left and right sides",
+    ),
+    (
+        ["nok", "terracotta", "artefact", "artifact"],
+        "archaeological terracotta artifact, weathered clay material, carved relief details, chipped irregular edges, thick solid fragment, museum scan style",
     ),
 ]
 
@@ -331,6 +368,31 @@ FRONT_BIASED_MESH_TERMS = [
 ]
 
 
+HARD_SURFACE_TERMS = [
+    "table",
+    "desk",
+    "chair",
+    "stool",
+    "fan",
+    "vehicle",
+    "car",
+    "truck",
+    "bus",
+    "box",
+    "cabinet",
+    "shelf",
+]
+
+
+FURNITURE_TERMS = [
+    "table",
+    "desk",
+    "chair",
+    "stool",
+    "bench",
+]
+
+
 def prompt_has_term(prompt: str, term: str) -> bool:
 
     normalized_prompt = prompt.lower().replace("-", " ")
@@ -359,7 +421,15 @@ def collect_prompt_rules(user_prompt: str, rules: list[tuple[list[str], str]]) -
     return collected
 
 
-def build_prompt(user_prompt: str) -> str:
+def prompt_has_any(prompt: str, terms: list[str]) -> bool:
+
+    return any(
+        prompt_has_term(prompt, term)
+        for term in terms
+    )
+
+
+def build_prompt(user_prompt: str, view_hint: Optional[str] = None) -> str:
 
     subject = user_prompt.strip()
 
@@ -377,6 +447,8 @@ def build_prompt(user_prompt: str) -> str:
         identity_rules + style_rules
     )
 
+    view_text = view_hint or "front three-quarter orthographic product view"
+
     return f"""
     exact subject: {subject},
     a single {subject},
@@ -384,13 +456,15 @@ def build_prompt(user_prompt: str) -> str:
     one complete object only,
     centered in frame,
     full object visible,
-    front three-quarter view,
+    {view_text},
     clean readable silhouette,
     {emphasis}
     compact solid form,
     smooth clean surfaces,
     simple clear geometry,
     crisp object boundaries,
+    accurate object proportions,
+    clean hard edges where the object has straight manufactured parts,
     solid material,
     matte product render,
     sharp focus,
@@ -480,7 +554,11 @@ def get_image_pipe():
     return image_pipe
 
 
-def generate_source_image(prompt: str, seed: Optional[int]) -> tuple[Image.Image, int]:
+def generate_source_image(
+    prompt: str,
+    seed: Optional[int],
+    view_hint: Optional[str] = None
+) -> tuple[Image.Image, int]:
 
     pipe = get_image_pipe()
 
@@ -496,7 +574,7 @@ def generate_source_image(prompt: str, seed: Optional[int]) -> tuple[Image.Image
     ).manual_seed(seed)
 
     result = pipe(
-        prompt=build_prompt(prompt),
+        prompt=build_prompt(prompt, view_hint),
         negative_prompt=build_negative_prompt(prompt),
         num_inference_steps=SDXL_STEPS,
         guidance_scale=SDXL_GUIDANCE_SCALE,
@@ -928,6 +1006,266 @@ def clean_mesh(mesh, smooth_iterations: int = 0):
 
     return mesh
 
+
+def repair_mesh(mesh):
+
+    try:
+
+        trimesh.repair.fix_inversion(mesh)
+        trimesh.repair.fix_normals(mesh)
+        trimesh.repair.fill_holes(mesh)
+
+    except Exception as e:
+
+        print("Mesh repair skipped:", e)
+
+    try:
+
+        mesh.remove_degenerate_faces()
+
+    except Exception:
+
+        pass
+
+    mesh.remove_unreferenced_vertices()
+
+    try:
+
+        mesh.merge_vertices()
+
+    except Exception:
+
+        pass
+
+    return mesh
+
+
+def decimate_mesh(mesh, target_faces: int):
+
+    if target_faces <= 0 or len(mesh.faces) <= target_faces:
+
+        return mesh
+
+    try:
+
+        return mesh.simplify_quadric_decimation(target_faces)
+
+    except Exception as e:
+
+        print("Decimation skipped:", e)
+
+    return mesh
+
+
+def normalize_mesh_transform(mesh):
+
+    bounds = np.asarray(
+        mesh.bounds,
+        dtype=np.float64
+    )
+
+    if bounds.shape != (2, 3):
+
+        return mesh
+
+    center = bounds.mean(axis=0)
+    extents = bounds[1] - bounds[0]
+    max_extent = float(extents.max())
+
+    if max_extent <= 0:
+
+        return mesh
+
+    vertices = np.asarray(
+        mesh.vertices,
+        dtype=np.float64
+    ).copy()
+
+    vertices = (vertices - center) / max_extent * 2.0
+
+    vertices[:, 1] -= vertices[:, 1].min()
+
+    mesh.vertices = vertices
+
+    try:
+
+        mesh.fix_normals()
+
+    except Exception:
+
+        pass
+
+    return mesh
+
+
+def snap_near_ground_for_furniture(mesh, prompt: str):
+
+    if not prompt_has_any(prompt, FURNITURE_TERMS):
+
+        return mesh
+
+    vertices = np.asarray(
+        mesh.vertices,
+        dtype=np.float64
+    ).copy()
+
+    if vertices.size == 0:
+
+        return mesh
+
+    y_min = float(vertices[:, 1].min())
+    y_max = float(vertices[:, 1].max())
+    height = max(y_max - y_min, 1e-6)
+
+    lower_band = vertices[:, 1] <= y_min + height * 0.08
+
+    if np.any(lower_band):
+
+        vertices[lower_band, 1] = y_min
+        mesh.vertices = vertices
+
+        try:
+
+            mesh.fix_normals()
+
+        except Exception:
+
+            pass
+
+    return mesh
+
+
+def preserve_hard_surface_shape(mesh, prompt: str):
+
+    if not prompt_has_any(prompt, HARD_SURFACE_TERMS):
+
+        return mesh
+
+    try:
+
+        angle = math.radians(40.0)
+        mesh.face_normals
+        groups = trimesh.graph.facets(
+            mesh,
+            engine=None,
+            facet_threshold=angle
+        )
+
+        if groups:
+
+            mesh.visual.face_colors = [220, 220, 220, 255]
+
+    except Exception:
+
+        pass
+
+    return mesh
+
+
+def score_mesh_candidate(mesh, prompt: str) -> float:
+
+    try:
+
+        extents = np.asarray(
+            mesh.extents,
+            dtype=np.float64
+        )
+
+        face_count = len(mesh.faces)
+        vertex_count = len(mesh.vertices)
+        component_count = len(mesh.split(only_watertight=False))
+        volume_score = float(np.prod(np.maximum(extents, 1e-6)))
+        compactness = float(extents.min() / max(extents.max(), 1e-6))
+
+        score = (
+            math.log1p(face_count)
+            + math.log1p(vertex_count) * 0.5
+            + volume_score * 0.15
+            + compactness
+            - max(0, component_count - 1) * 0.75
+        )
+
+        if prompt_has_any(prompt, FURNITURE_TERMS):
+
+            score += float(extents[0] + extents[2]) * 0.2
+
+        return score
+
+    except Exception:
+
+        return 0.0
+
+
+def advanced_mesh_cleanup(mesh, prompt: str, mesh_settings: dict):
+
+    mesh = repair_mesh(mesh)
+
+    mesh = snap_near_ground_for_furniture(
+        mesh,
+        prompt
+    )
+
+    mesh = preserve_hard_surface_shape(
+        mesh,
+        prompt
+    )
+
+    mesh = decimate_mesh(
+        mesh,
+        int(mesh_settings.get("target_faces") or 0)
+    )
+
+    mesh = repair_mesh(mesh)
+
+    mesh = normalize_mesh_transform(mesh)
+
+    return mesh
+
+
+def bake_mesh_texture(mesh, scene_code, texture_resolution: int, texture_path: str):
+
+    if texture_resolution <= 0 or bake_texture is None:
+
+        return mesh, False
+
+    try:
+
+        bake_output = bake_texture(
+            mesh,
+            triposr_model,
+            scene_code,
+            texture_resolution
+        )
+
+        texture_image = Image.fromarray(
+            (bake_output["colors"] * 255.0)
+            .clip(0, 255)
+            .astype(np.uint8)
+        ).transpose(Image.FLIP_TOP_BOTTOM)
+
+        texture_image.save(texture_path)
+
+        visual = trimesh.visual.TextureVisuals(
+            uv=bake_output["uvs"],
+            image=texture_image
+        )
+
+        textured_mesh = trimesh.Trimesh(
+            vertices=mesh.vertices[bake_output["vmapping"]],
+            faces=bake_output["indices"],
+            vertex_normals=mesh.vertex_normals[bake_output["vmapping"]],
+            visual=visual,
+            process=False
+        )
+
+        return textured_mesh, True
+
+    except Exception as e:
+
+        print("Texture baking skipped:", e)
+
+    return mesh, False
+
 # =====================================================
 # HOME
 # =====================================================
@@ -1034,6 +1372,11 @@ def generate3d(
             "input.png"
         )
 
+        texture_path = os.path.join(
+            out_dir,
+            "texture.png"
+        )
+
         glb_path = os.path.join(
             out_dir,
             "mesh.glb"
@@ -1044,6 +1387,10 @@ def generate3d(
             mc_resolution
         )
 
+        candidate_views = HIGH_DETAIL_CANDIDATE_VIEWS[
+            :max(1, int(mesh_settings.get("candidate_views") or 1))
+        ]
+
         if source == "example":
 
             progress_data["progress"] = 15
@@ -1053,58 +1400,196 @@ def generate3d(
 
             seed_used = seed
 
+            candidate_images = [
+                {
+                    "image": image,
+                    "seed": seed_used,
+                    "view": "example image"
+                }
+            ]
+
         else:
 
             progress_data["progress"] = 15
-            progress_data["status"] = "Generating source image..."
+            progress_data["status"] = "Generating source image candidates..."
 
-            image, seed_used = generate_source_image(
-                prompt,
-                seed
+            candidate_images = []
+
+            base_seed = seed
+
+            for index, view_hint in enumerate(candidate_views):
+
+                candidate_seed = None
+
+                if base_seed is not None:
+
+                    candidate_seed = int(base_seed) + index
+
+                image, seed_used = generate_source_image(
+                    prompt,
+                    candidate_seed,
+                    view_hint
+                )
+
+                candidate_images.append(
+                    {
+                        "image": image,
+                        "seed": seed_used,
+                        "view": view_hint
+                    }
+                )
+
+                progress_data["progress"] = 15 + int(
+                    (index + 1) / len(candidate_views) * 20
+                )
+
+        best_candidate = None
+        best_score = -float("inf")
+
+        for index, candidate in enumerate(candidate_images):
+
+            candidate_raw_path = os.path.join(
+                out_dir,
+                f"raw_{index + 1}.png"
             )
 
-        image.save(raw_path)
-
-        progress_data["progress"] = 40
-        progress_data["status"] = "Isolating object..."
-
-        image = preprocess_for_triposr(image)
-
-        image.save(input_path)
-
-        progress_data["progress"] = 55
-        progress_data["status"] = "Running TripoSR..."
-
-        with torch.no_grad():
-
-            scene_codes = triposr_model(
-                [image],
-                device=device
+            candidate_input_path = os.path.join(
+                out_dir,
+                f"input_{index + 1}.png"
             )
 
-        progress_data["progress"] = 78
-        progress_data["status"] = "Extracting mesh..."
+            candidate["image"].save(candidate_raw_path)
 
-        meshes = triposr_model.extract_mesh(
-            scene_codes,
-            True,
-            resolution=mesh_settings["resolution"],
-            threshold=mesh_settings["threshold"]
+            progress_data["progress"] = 40 + int(
+                index / len(candidate_images) * 35
+            )
+            progress_data["status"] = (
+                f"Reconstructing candidate {index + 1}/{len(candidate_images)}..."
+            )
+
+            processed_image = preprocess_for_triposr(
+                candidate["image"]
+            )
+
+            processed_image.save(candidate_input_path)
+
+            with torch.no_grad():
+
+                scene_codes = triposr_model(
+                    [processed_image],
+                    device=device
+                )
+
+            meshes = triposr_model.extract_mesh(
+                scene_codes,
+                mesh_settings["texture_resolution"] <= 0,
+                resolution=mesh_settings["resolution"],
+                threshold=mesh_settings["threshold"]
+            )
+
+            smooth_iterations = mesh_settings["smooth_iterations"]
+
+            if prompt_has_any(prompt, HARD_SURFACE_TERMS):
+
+                smooth_iterations = min(
+                    smooth_iterations,
+                    2
+                )
+
+            original_mesh = clean_mesh(
+                meshes[0],
+                smooth_iterations=smooth_iterations
+            )
+
+            mesh = to_gradio_3d_orientation(
+                original_mesh.copy()
+            )
+
+            mesh = constrain_unseen_back_depth(
+                mesh,
+                prompt
+            )
+
+            if mesh_settings.get("advanced_cleanup"):
+
+                mesh = advanced_mesh_cleanup(
+                    mesh,
+                    prompt,
+                    mesh_settings
+                )
+
+            else:
+
+                mesh = normalize_mesh_transform(mesh)
+
+            score = score_mesh_candidate(
+                mesh,
+                prompt
+            )
+
+            if score > best_score:
+
+                best_score = score
+
+                best_candidate = {
+                    "mesh": mesh,
+                    "original_mesh": original_mesh,
+                    "scene_code": scene_codes[0],
+                    "raw_path": candidate_raw_path,
+                    "input_path": candidate_input_path,
+                    "seed": candidate["seed"],
+                    "view": candidate["view"],
+                    "score": score,
+                }
+
+        if best_candidate is None:
+
+            raise Exception(
+                "No mesh candidate was generated"
+            )
+
+        shutil.copyfile(
+            best_candidate["raw_path"],
+            raw_path
         )
 
-        mesh = clean_mesh(
-            meshes[0],
-            smooth_iterations=mesh_settings["smooth_iterations"]
+        shutil.copyfile(
+            best_candidate["input_path"],
+            input_path
         )
 
-        mesh = to_gradio_3d_orientation(
-            mesh
-        )
+        seed_used = best_candidate["seed"]
 
-        mesh = constrain_unseen_back_depth(
-            mesh,
-            prompt
-        )
+        mesh = best_candidate["mesh"]
+
+        texture_baked = False
+
+        if mesh_settings["texture_resolution"] > 0:
+
+            progress_data["progress"] = 84
+            progress_data["status"] = "Baking texture atlas..."
+
+            textured_mesh, texture_baked = bake_mesh_texture(
+                best_candidate["original_mesh"],
+                best_candidate["scene_code"],
+                int(mesh_settings["texture_resolution"]),
+                texture_path
+            )
+
+            if texture_baked:
+
+                mesh = to_gradio_3d_orientation(
+                    textured_mesh
+                )
+
+                mesh = constrain_unseen_back_depth(
+                    mesh,
+                    prompt
+                )
+
+                mesh = repair_mesh(mesh)
+
+                mesh = normalize_mesh_transform(mesh)
 
         progress_data["progress"] = 92
         progress_data["status"] = "Exporting GLB..."
@@ -1152,6 +1637,21 @@ def generate3d(
 
             "mesh_threshold":
                 mesh_settings["threshold"],
+
+            "candidate_views":
+                len(candidate_images),
+
+            "selected_view":
+                best_candidate["view"],
+
+            "candidate_score":
+                best_candidate["score"],
+
+            "texture_baked":
+                texture_baked,
+
+            "texture_resolution":
+                mesh_settings["texture_resolution"],
 
             "back_depth_constraint":
                 MESH_BACK_DEPTH_CONSTRAINT_ENABLED,
