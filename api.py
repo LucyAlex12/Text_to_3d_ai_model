@@ -433,6 +433,24 @@ def build_prompt(user_prompt: str, view_hint: Optional[str] = None) -> str:
 
     subject = user_prompt.strip()
 
+    subject = re.sub(
+        r"\s+",
+        " ",
+        subject
+    )
+
+    subject_parts = [
+        part.strip()
+        for part in subject.split(",")
+        if part.strip()
+    ]
+
+    if len(subject_parts) > 6:
+
+        subject = ", ".join(
+            subject_parts[:6]
+        )
+
     identity_rules = collect_prompt_rules(
         subject,
         IDENTITY_PROMPT_RULES
@@ -449,31 +467,32 @@ def build_prompt(user_prompt: str, view_hint: Optional[str] = None) -> str:
 
     view_text = view_hint or "front three-quarter orthographic product view"
 
-    return f"""
-    exact subject: {subject},
-    a single {subject},
-    must visibly match the exact subject: {subject},
-    one complete object only,
-    centered in frame,
-    full object visible,
-    {view_text},
-    clean readable silhouette,
-    {emphasis}
-    compact solid form,
-    smooth clean surfaces,
-    simple clear geometry,
-    crisp object boundaries,
-    accurate object proportions,
-    clean hard edges where the object has straight manufactured parts,
-    solid material,
-    matte product render,
-    sharp focus,
-    neutral gray studio background,
-    product render,
-    orthographic camera,
-    evenly lit,
-    high quality
-    """
+    prompt_parts = [
+        subject,
+        "single complete object",
+        "centered full object visible",
+        view_text,
+        "clean readable silhouette",
+    ]
+
+    prompt_parts.extend(identity_rules[:1])
+    prompt_parts.extend(style_rules[:1])
+
+    prompt_parts.extend(
+        [
+            "accurate proportions",
+            "crisp object boundaries",
+            "matte product render",
+            "neutral gray studio background",
+            "sharp focus",
+        ]
+    )
+
+    return ", ".join(
+        part
+        for part in prompt_parts
+        if part
+    )
 
 
 def build_negative_prompt(user_prompt: str) -> str:
@@ -484,8 +503,8 @@ def build_negative_prompt(user_prompt: str) -> str:
         if not prompt_has_term(user_prompt, term)
     ]
 
-    return ",\n".join(
-        negative_terms
+    return ", ".join(
+        negative_terms[:24]
     )
 
 # =====================================================
@@ -1048,11 +1067,33 @@ def decimate_mesh(mesh, target_faces: int):
 
     try:
 
-        return mesh.simplify_quadric_decimation(target_faces)
+        target_reduction = 1.0 - (
+            float(target_faces) / float(len(mesh.faces))
+        )
+
+        target_reduction = max(
+            0.0,
+            min(
+                target_reduction,
+                0.95
+            )
+        )
+
+        return mesh.simplify_quadric_decimation(
+            percent=target_reduction
+        )
 
     except Exception as e:
 
-        print("Decimation skipped:", e)
+        try:
+
+            return mesh.simplify_quadric_decimation(
+                face_count=int(target_faces)
+            )
+
+        except Exception as retry_error:
+
+            print("Decimation skipped:", retry_error or e)
 
     return mesh
 
@@ -1143,17 +1184,7 @@ def preserve_hard_surface_shape(mesh, prompt: str):
 
     try:
 
-        angle = math.radians(40.0)
-        mesh.face_normals
-        groups = trimesh.graph.facets(
-            mesh,
-            engine=None,
-            facet_threshold=angle
-        )
-
-        if groups:
-
-            mesh.visual.face_colors = [220, 220, 220, 255]
+        mesh.fix_normals()
 
     except Exception:
 
@@ -1482,7 +1513,7 @@ def generate3d(
 
             meshes = triposr_model.extract_mesh(
                 scene_codes,
-                mesh_settings["texture_resolution"] <= 0,
+                True,
                 resolution=mesh_settings["resolution"],
                 threshold=mesh_settings["threshold"]
             )
@@ -1586,8 +1617,6 @@ def generate3d(
                     mesh,
                     prompt
                 )
-
-                mesh = repair_mesh(mesh)
 
                 mesh = normalize_mesh_transform(mesh)
 
